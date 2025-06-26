@@ -7,6 +7,8 @@ import {
 } from "../utils/Cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
+import e from "express";
+import mongoose from "mongoose";
 
 const generateAccessTokenAndRefreshToken = async (userId) => {
   try {
@@ -277,12 +279,15 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
   if (!fullname || !email) {
     throw new ApiError(400, "fullname and email are required");
   }
-  const user = await User.findByIdAndUpdate(req.user?._id, 
-    $set: {
-      fullname,
-      email,
+  const user = await User.findByIdAndUpdate(
+    req.user?._id,
+    {
+      $set: {
+        fullname,
+        email,
+      },
     },
-    { new: true},
+    { new: true }
   ).select("-password -refreshToken");
 
   return res
@@ -290,12 +295,12 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, user, "Account details updated successfully"));
 });
 const updateUserAvatar = asyncHandler(async (req, res) => {
-  const avatarLocalPath =req.files?.path
-  if (!avatarLocalPath){
+  const avatarLocalPath = req.files?.path;
+  if (!avatarLocalPath) {
     throw new ApiError(400, "Avatar is required");
   }
-  const avatar = await uploadOnCloudniary(avatarLocalPath)
-  if (!avatar.url){
+  const avatar = await uploadOnCloudniary(avatarLocalPath);
+  if (!avatar.url) {
     throw new ApiError(500, "Failed to upload avatar");
   }
   const user = await User.findByIdAndUpdate(
@@ -304,19 +309,20 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
       $set: {
         avatar: avatar.url,
       },
-    }, { new: true }
+    },
+    { new: true }
   ).select("-password -refreshToken");
   return res
     .status(200)
     .json(new ApiResponse(200, user, "Avatar updated successfully"));
 });
 const updateUserCoverImage = asyncHandler(async (req, res) => {
-  const coverImageLocalPath =req.files?.path
-  if (!coverImageLocalPath){
+  const coverImageLocalPath = req.files?.path;
+  if (!coverImageLocalPath) {
     throw new ApiError(400, "Cover image is required");
   }
-  const coverImage = await uploadOnCloudniary(coverImageLocalPath)
-  if (!coverImage.url){
+  const coverImage = await uploadOnCloudniary(coverImageLocalPath);
+  if (!coverImage.url) {
     throw new ApiError(500, "Failed to upload cover image");
   }
   const user = await User.findByIdAndUpdate(
@@ -325,21 +331,153 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
       $set: {
         coverImage: coverImage.url,
       },
-    }, { new: true }
+    },
+    { new: true }
   ).select("-password -refreshToken");
   return res
     .status(200)
     .json(new ApiResponse(200, user, "Cover image updated successfully"));
 });
 
-export { 
+const getUserChannelProfile = asyncHandler(async (req, res) => {
+  const { username } = req.body;
+  if (!username) {
+    throw new ApiError(400, "Username is required");
+  }
+
+  const channel = await User.aggregate([
+    {
+      $match: {
+        username: username?.toLowerCase(),
+      },
+    },
+    {
+      $lookup: {
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "channel",
+        as: "subscribers",
+      },
+    },
+    {
+      $lookup: {
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "subscriber",
+        as: "subscribedTo",
+      },
+    },
+    {
+      $addFields: {
+        suscriberCount: {
+          size: "$suscribers",
+        },
+        channelSuscribedToCount: {
+          size: "$subscribedTo",
+        },
+        //to check if user is suscribed
+        isSuscribed: {
+          $cond: {
+            if: { $in: [req.user?._id, "$subscribers.subscriber"] },
+            then: true,
+            else: false,
+          },
+        },
+      },
+    },
+    //projecting only neccesary fields
+    {
+      $project: {
+        fullname: 1,
+        username: 1,
+        avatar: 1,
+        coverImage: 1,
+        suscriberCount: 1,
+        channelSuscribedToCount: 1,
+        isSuscribed: 1,
+        email: 1,
+      },
+    },
+  ]);
+
+  // above result is an array
+  if (!channel.length) {
+    throw new ApiError(404, "Channel not found");
+  }
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(200, channel[0], "Channel profile fetched successfully")
+    );
+});
+
+const watchHistory = asyncHandler(async (req, res) => {
+  const user = await User.aggregate([
+    {
+      $match: {
+        _id: req.user?._id,
+      },
+    },
+    {
+      $lookup: {
+        from: "videos",
+        localField: "watchHistory",
+        foreignField: "_id",
+        as: "watchHistory",
+        pipeline: [
+          {
+            $lookup: {
+              from: "users",
+              localField: "owner",
+              foreignField: "_id",
+              as: "owner",
+              pipeline: [
+                {
+                  $project: {
+                    fullname: 1,
+                    username: 1,
+                    avatar: 1,
+                  },
+                },
+              ],
+            },
+          },
+          {
+            $addFields: {
+              owner: {
+                $firest: "$owner",
+              },
+            },
+          },
+        ],
+      },
+    },
+  ]);
+  if (!user.length) {
+    throw new ApiError(404, "User not found");
+  }
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        user[0]?.watchHistory,
+        "Watch history fetched successfully"
+      )
+    );
+});
+
+export {
   registerUser,
   loginUser,
   refreshAccesToken,
   logoutUser,
   changeCurrentPassword,
-  getCurrentUser, 
-  updateAccountDetails, 
-  updateUserAvatar, 
-  updateUserCoverImage 
+  getCurrentUser,
+  updateAccountDetails,
+  updateUserAvatar,
+  updateUserCoverImage,
+  getUserChannelProfile,
+  watchHistory,
 };
