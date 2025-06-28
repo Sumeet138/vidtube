@@ -60,6 +60,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   //validate password
   const isPasswordCorrect = await user.isPasswordCorrect(password);
+
   if (!isPasswordCorrect) {
     throw new ApiError(401, "Invalid Password");
   }
@@ -95,13 +96,19 @@ const loginUser = asyncHandler(async (req, res) => {
 });
 
 const logoutUser = asyncHandler(async (req, res) => {
-  await User.findByIdAndUpdate(req.user._id, {
-    $set: {
-      refreshToken: undefined,
+  await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $unset: {
+        refreshToken: 1,
+      },
     },
-  });
+    {
+      new: true,
+    }
+  );
 
-  option = {
+  const option = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
   };
@@ -193,7 +200,7 @@ const registerUser = asyncHandler(async (req, res) => {
       .status(201)
       .json(new ApiResponse(200, createdUser, "User register Successfully"));
   } catch (error) {
-    console.log("User creation Failed");
+    console.log("User creation Failed", error);
     if (avatar) {
       await deleteFromCouldinary(avatar.public_id);
     }
@@ -317,14 +324,18 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, user, "Avatar updated successfully"));
 });
 const updateUserCoverImage = asyncHandler(async (req, res) => {
+  //getting images path from multer
   const coverImageLocalPath = req.files?.path;
   if (!coverImageLocalPath) {
     throw new ApiError(400, "Cover image is required");
   }
+
+  //uploading to cloudinary
   const coverImage = await uploadOnCloudniary(coverImageLocalPath);
   if (!coverImage.url) {
     throw new ApiError(500, "Failed to upload cover image");
   }
+  //updating user cover image
   const user = await User.findByIdAndUpdate(
     req.user?._id,
     {
@@ -334,6 +345,12 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
     },
     { new: true }
   ).select("-password -refreshToken");
+
+  //delete old image from cloudinary
+  if (req.user?.coverImage) {
+    await deleteFromCouldinary(req.user?.coverImage);
+  }
+
   return res
     .status(200)
     .json(new ApiResponse(200, user, "Cover image updated successfully"));
